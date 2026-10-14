@@ -1,6 +1,6 @@
 use libc::{
-    sock_filter, BPF_ABS, BPF_JEQ, BPF_JGE, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W,
-    SECCOMP_RET_KILL_PROCESS,
+    BPF_ABS, BPF_JEQ, BPF_JGE, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W, SECCOMP_RET_KILL_PROCESS,
+    sock_filter,
 };
 
 use crate::consts::{
