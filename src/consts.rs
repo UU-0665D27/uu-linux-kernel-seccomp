@@ -23,7 +23,6 @@ pub const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
 // ---- SECCOMP_RET_* (linux/seccomp.h) ----
 pub const SECCOMP_RET_KILL_PROCESS: u32 = 0x8000_0000;
 pub const SECCOMP_RET_KILL_THREAD: u32 = 0x0000_0000;
-pub const SECCOMP_RET_ERRNO: u32 = 0x0005_0000;
 pub const SECCOMP_RET_USER_NOTIF: u32 = 0x7fc0_0000;
 pub const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
 pub const SECCOMP_RET_DATA_MASK: u32 = 0x0000_ffff;

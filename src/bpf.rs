@@ -1,8 +1,22 @@
-use crate::consts::*;
-use libc::sock_filter;
+use libc::{
+    BPF_ABS, BPF_JEQ, BPF_JGE, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W, SECCOMP_RET_KILL_PROCESS,
+    sock_filter,
+};
+
+use crate::consts::{
+    AUDIT_ARCH_X86_64, SECCOMP_DATA_ARCH_OFFSET, SECCOMP_DATA_NR_OFFSET, X32_SYSCALL_BIT,
+};
 
 #[inline]
 const fn stmt(code: u16, k: u32) -> sock_filter {
+    // c
+    //  struct sock_filter {	/* Filter block */
+    //      __u16	code;   /* Actual filter code */
+    //      __u8	jt;	/* Jump true */
+    //      __u8	jf;	/* Jump false */
+    //      __u32	k;      /* Generic multiuse field */
+    //};
+
     sock_filter {
         code,
         jt: 0,

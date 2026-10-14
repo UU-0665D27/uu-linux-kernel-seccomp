@@ -17,7 +17,7 @@ fn main() {
         },
     ];
 
-    let prog = bpf::build_program(&rules, consts::SECCOMP_RET_ERRNO | libc::ENOSYS);
+    let prog = bpf::build_program(&rules, libc::SECCOMP_RET_ERRNO | (libc::ENOSYS as u32));
 
     for (i, f) in prog.iter().enumerate() {
         println!(
