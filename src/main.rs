@@ -5,15 +5,15 @@ fn main() {
     let rules = vec![
         bpf::Rule {
             nr: libc::SYS_read,
-            action: consts::SECCOMP_RET_ALLOW,
+            action: libc::SECCOMP_RET_ALLOW,
         },
         bpf::Rule {
             nr: libc::SYS_write,
-            action: consts::SECCOMP_RET_ALLOW,
+            action: libc::SECCOMP_RET_ALLOW,
         },
         bpf::Rule {
             nr: libc::SYS_execve,
-            action: consts::SECCOMP_RET_ALLOW,
+            action: libc::SECCOMP_RET_ALLOW,
         },
     ];
 
