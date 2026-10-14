@@ -1,24 +1,43 @@
+use crate::consts::{
+    AUDIT_ARCH_X86_64, SECCOMP_DATA_ARCH_OFFSET, SECCOMP_DATA_NR_OFFSET, X32_SYSCALL_BIT,
+};
 use libc::{
     BPF_ABS, BPF_JEQ, BPF_JGE, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W, SECCOMP_RET_KILL_PROCESS,
     sock_filter,
 };
+use std::fmt;
 
-use crate::consts::{
-    AUDIT_ARCH_X86_64, SECCOMP_DATA_ARCH_OFFSET, SECCOMP_DATA_NR_OFFSET, X32_SYSCALL_BIT,
-};
+/// Ошибки сборки BPF-программы.
+#[derive(Debug)]
+pub enum BuildError {
+    TooManyRules { needed_offset: usize },
+    SyscallNrOutOfRange { nr: i64 },
+}
 
-// struct sock_filter {   /* Filter block */
-//     __u16      code;   /* Actual filter code */
-//     __u8       jt;     /* Jump true */
-//     __u8       jf;     /* Jump false */
-//     __u32      k;      /* Generic multiuse field */
-// };
-//
-// Все BPF_* из libc объявлены как u32 (это те же константы, что и для
-// SO_ATTACH_FILTER), а поле `code` в sock_filter — u16. Приводим тип
-// один раз здесь, а не на каждом месте вызова.
+impl fmt::Display for BuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooManyRules { needed_offset } => write!(
+                f,
+                "слишком много правил: нужен переход на {needed_offset} инструкций вперёд, лимит BPF jt/jf — 255"
+            ),
+            Self::SyscallNrOutOfRange { nr } => {
+                write!(f, "номер сискола {nr} не влезает в u32")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+fn offset_to_u8(offset: usize) -> Result<u8, BuildError> {
+    u8::try_from(offset).map_err(|_| BuildError::TooManyRules {
+        needed_offset: offset,
+    })
+}
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 const fn stmt(code: u32, k: u32) -> sock_filter {
     sock_filter {
         code: code as u16,
@@ -29,6 +48,7 @@ const fn stmt(code: u32, k: u32) -> sock_filter {
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 const fn jump(code: u32, k: u32, jt: u8, jf: u8) -> sock_filter {
     sock_filter {
         code: code as u16,
@@ -38,13 +58,12 @@ const fn jump(code: u32, k: u32, jt: u8, jf: u8) -> sock_filter {
     }
 }
 
-/// Одно правило: "если сискол == `nr`, вернуть `action`".
 pub struct Rule {
     pub nr: i64,
     pub action: u32,
 }
 
-pub fn build_program(rules: &[Rule], default_action: u32) -> Vec<sock_filter> {
+pub fn build_program(rules: &[Rule], default_action: u32) -> Result<Vec<sock_filter>, BuildError> {
     let mut prog = Vec::with_capacity(4 + rules.len() * 2 + 2);
 
     prog.push(stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_ARCH_OFFSET));
@@ -52,9 +71,10 @@ pub fn build_program(rules: &[Rule], default_action: u32) -> Vec<sock_filter> {
     prog.push(stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_NR_OFFSET));
     prog.push(jump(BPF_JMP | BPF_JGE | BPF_K, X32_SYSCALL_BIT, 0, 0));
 
-    let rules_start = prog.len(); // = 4
+    let rules_start = prog.len();
     for r in rules {
-        prog.push(jump(BPF_JMP | BPF_JEQ | BPF_K, r.nr as u32, 0, 0));
+        let nr = u32::try_from(r.nr).map_err(|_| BuildError::SyscallNrOutOfRange { nr: r.nr })?;
+        prog.push(jump(BPF_JMP | BPF_JEQ | BPF_K, nr, 0, 0));
         prog.push(stmt(BPF_RET | BPF_K, r.action));
     }
 
@@ -64,18 +84,18 @@ pub fn build_program(rules: &[Rule], default_action: u32) -> Vec<sock_filter> {
     let kill_idx = prog.len();
     prog.push(stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
 
-    prog[1].jf = (kill_idx - (1 + 1)) as u8;
-    prog[3].jt = (kill_idx - (3 + 1)) as u8;
+    prog[1].jf = offset_to_u8(kill_idx - (1 + 1))?;
+    prog[3].jt = offset_to_u8(kill_idx - (3 + 1))?;
 
     for (i, _) in rules.iter().enumerate() {
         let jump_idx = rules_start + i * 2;
         let is_last = i + 1 == rules.len();
         prog[jump_idx].jf = if is_last {
-            (default_ret_idx - (jump_idx + 1)) as u8
+            offset_to_u8(default_ret_idx - (jump_idx + 1))?
         } else {
             1
         };
     }
 
-    prog
+    Ok(prog)
 }

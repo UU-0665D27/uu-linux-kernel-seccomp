@@ -1,7 +1,7 @@
 mod bpf;
 mod consts;
 
-fn main() {
+fn main() -> Result<(), bpf::BuildError> {
     let rules = vec![
         bpf::Rule {
             nr: libc::SYS_read,
@@ -17,7 +17,9 @@ fn main() {
         },
     ];
 
-    let prog = bpf::build_program(&rules, libc::SECCOMP_RET_ERRNO | (libc::ENOSYS as u32));
+    #[allow(clippy::cast_sign_loss)] // ENOSYS=38 — заведомо положительная константа
+    let enosys = libc::ENOSYS as u32;
+    let prog = bpf::build_program(&rules, libc::SECCOMP_RET_ERRNO | enosys)?;
 
     for (i, f) in prog.iter().enumerate() {
         println!(
@@ -25,4 +27,5 @@ fn main() {
             f.code, f.jt, f.jf, f.k
         );
     }
+    Ok(())
 }
