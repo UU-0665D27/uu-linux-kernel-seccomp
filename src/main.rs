@@ -1,5 +1,4 @@
-mod bpf;
-mod consts;
+use uu_linux_kernel_seccomp::bpf;
 
 fn main() -> Result<(), bpf::BuildError> {
     let rules = vec![
@@ -29,6 +28,20 @@ fn main() -> Result<(), bpf::BuildError> {
             "{i:3}: code={:#06x} jt={} jf={} k={:#x}",
             f.code, f.jt, f.jf, f.k
         );
+    }
+
+    let result = unsafe { libc::fork() };
+    match result {
+        -1 => {
+            //ошибка fork
+        }
+        0 => {
+            //код потомка
+            unsafe { libc::exit(0) };
+        }
+        _ => {
+            //родительский код
+        }
     }
     Ok(())
 }

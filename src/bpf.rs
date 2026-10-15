@@ -7,12 +7,16 @@ use libc::{
 };
 use std::fmt;
 
-/// Ошибки сборки BPF-программы.
+/// Ошибки, возникающие при сборке BPF-программы для seccomp.
 #[derive(Debug)]
 pub enum BuildError {
+    /// Превышен лимит относительного перехода BPF (jt/jf должны быть <= 255).
     TooManyRules { needed_offset: usize },
+    /// Номер системного вызова не помещается в 32-битное беззнаковое целое.
     SyscallNrOutOfRange { nr: i64 },
+    /// BPF-опкод не помещается в 16-битное поле `code` структуры `sock_filter`.
     BpfCodeOutOfRange { code: u32 },
+    /// Переданная константа имеет недопустимое значение для преобразования.
     InvalidConstant { name: &'static str, value: i64 },
 }
 
@@ -38,12 +42,33 @@ impl fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
+/// Преобразует смещение в 8-битное значение для инструкций перехода BPF.
+///
+/// Инструкции перехода в классическом BPF (cBPF) используют 8-битные поля `jt` и `jf`,
+/// что ограничивает максимальный относительный прыжок 255 инструкциями.
+///
+/// # Аргументы
+/// * `offset` — целевое смещение в количестве инструкций.
+///
+/// # Ошибки
+/// Возвращает `BuildError::TooManyRules`, если `offset` превышает `u8::MAX`.
 fn offset_to_u8(offset: usize) -> Result<u8, BuildError> {
     u8::try_from(offset).map_err(|_| BuildError::TooManyRules {
         needed_offset: offset,
     })
 }
 
+/// Создаёт стандартную (не переходную) инструкцию BPF.
+///
+/// # Аргументы
+/// * `code` — битовая маска опкода (например, `BPF_LD | BPF_W | BPF_ABS`).
+/// * `k` — аргумент инструкции (смещение в `seccomp_data` или константа).
+///
+/// # Возвращает
+/// Структуру `sock_filter` с обнулёнными полями переходов (`jt` и `jf`).
+///
+/// # Ошибки
+/// Возвращает `BuildError::BpfCodeOutOfRange`, если `code` не помещается в `u16`.
 #[inline]
 fn stmt(code: u32, k: u32) -> Result<sock_filter, BuildError> {
     u16::try_from(code).map_or(Err(BuildError::BpfCodeOutOfRange { code }), |c| {
@@ -56,6 +81,19 @@ fn stmt(code: u32, k: u32) -> Result<sock_filter, BuildError> {
     })
 }
 
+/// Создаёт инструкцию условного перехода BPF.
+///
+/// # Аргументы
+/// * `code` — битовая маска опкода перехода (например, `BPF_JMP | BPF_JEQ | BPF_K`).
+/// * `k` — значение для сравнения с аккумулятором.
+/// * `jt` — смещение для перехода, если условие истинно (true).
+/// * `jf` — смещение для перехода, если условие ложно (false).
+///
+/// # Возвращает
+/// Структуру `sock_filter`, готовую к использованию в BPF-программе.
+///
+/// # Ошибки
+/// Возвращает `BuildError::BpfCodeOutOfRange`, если `code` не помещается в `u16`.
 #[inline]
 fn jump(code: u32, k: u32, jt: u8, jf: u8) -> Result<sock_filter, BuildError> {
     u16::try_from(code).map_or(Err(BuildError::BpfCodeOutOfRange { code }), |c| {
@@ -63,11 +101,42 @@ fn jump(code: u32, k: u32, jt: u8, jf: u8) -> Result<sock_filter, BuildError> {
     })
 }
 
+/// Правило фильтрации seccomp.
+///
+/// Определяет действие, которое должно быть выполнено при совпадении
+/// номера системного вызова.
 pub struct Rule {
+    /// Номер системного вызова (например, `libc::SYS_read`).
     pub nr: i64,
+    /// Действие seccomp (например, `libc::SECCOMP_RET_ALLOW`).
     pub action: u32,
 }
 
+/// Компилирует набор правил seccomp в исполняемую BPF-программу.
+///
+/// Формирует валидный массив инструкций `sock_filter`, который последовательно проверяет:
+/// 1. Архитектуру процесса (должна строго совпадать с `AUDIT_ARCH_X86_64`).
+/// 2. Отсутствие флага `X32_SYSCALL_BIT` в номере системного вызова.
+/// 3. Равенство номера системного вызова значениям из переданных `rules`.
+/// 4. Возврат `default_action`, если ни одно правило не совпало.
+/// 5. Принудительное завершение процесса (`SECCOMP_RET_KILL_PROCESS`) как абсолютный fallback.
+///
+/// После генерации базовых инструкций метод автоматически вычисляет и патчит
+/// относительные смещения переходов (`jt` и `jf`).
+///
+/// # Аргументы
+/// * `rules` — срез правил, определяющих разрешённые системные вызовы и действия.
+/// * `default_action` — действие по умолчанию (обычно `SECCOMP_RET_ERRNO | код_ошибки`).
+///
+/// # Возвращает
+/// Вектор инструкций `sock_filter`, готовый для передачи в `prctl(PR_SET_SECCOMP, ...)`
+/// или `seccomp(SECCOMP_SET_MODE_FILTER, ...)`.
+///
+/// # Errors
+/// * `BuildError::SyscallNrOutOfRange` — если номер системного вызова в правиле отрицательный или > `u32::MAX`.
+/// * `BuildError::BpfCodeOutOfRange` — если внутренний опкод BPF не помещается в `u16`.
+/// * `BuildError::TooManyRules` — если количество правил слишком велико, и относительный
+///   переход к `default_action` или `kill` превышает лимит в 255 инструкций.
 pub fn build_program(rules: &[Rule], default_action: u32) -> Result<Vec<sock_filter>, BuildError> {
     let mut prog = Vec::with_capacity(4 + rules.len() * 2 + 2);
 
