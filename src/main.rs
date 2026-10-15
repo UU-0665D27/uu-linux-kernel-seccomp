@@ -1,5 +1,5 @@
 use libc::sock_filter;
-use uu_linux_kernel_seccomp::bpf;
+use uu_linux_kernel_seccomp::libc::bpf;
 
 fn main() -> Result<(), bpf::BuildError> {
     let rules = vec![

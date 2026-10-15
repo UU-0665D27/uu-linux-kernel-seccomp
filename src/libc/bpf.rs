@@ -1,11 +1,12 @@
-use crate::consts::{
-    AUDIT_ARCH_X86_64, SECCOMP_DATA_ARCH_OFFSET, SECCOMP_DATA_NR_OFFSET, X32_SYSCALL_BIT,
-};
 use libc::{
     BPF_ABS, BPF_JEQ, BPF_JGE, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W, SECCOMP_RET_KILL_PROCESS,
     sock_filter,
 };
 use std::fmt;
+
+use crate::libc::consts::{
+    AUDIT_ARCH_X86_64, SECCOMP_DATA_ARCH_OFFSET, SECCOMP_DATA_NR_OFFSET, X32_SYSCALL_BIT,
+};
 
 /// Ошибки, возникающие при сборке BPF-программы для seccomp.
 #[derive(Debug)]
