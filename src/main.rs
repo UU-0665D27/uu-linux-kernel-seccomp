@@ -17,8 +17,12 @@ fn main() -> Result<(), bpf::BuildError> {
         },
     ];
 
-    #[allow(clippy::cast_sign_loss)] // ENOSYS=38 — заведомо положительная константа
-    let enosys = libc::ENOSYS as u32;
+    // Строгое преобразование без as и без паники
+    let enosys = u32::try_from(libc::ENOSYS).map_err(|_| bpf::BuildError::InvalidConstant {
+        name: "libc::ENOSYS",
+        value: i64::from(libc::ENOSYS),
+    })?;
+
     let prog = bpf::build_program(&rules, libc::SECCOMP_RET_ERRNO | enosys)?;
 
     for (i, f) in prog.iter().enumerate() {

@@ -12,6 +12,8 @@ use std::fmt;
 pub enum BuildError {
     TooManyRules { needed_offset: usize },
     SyscallNrOutOfRange { nr: i64 },
+    BpfCodeOutOfRange { code: u32 },
+    InvalidConstant { name: &'static str, value: i64 },
 }
 
 impl fmt::Display for BuildError {
@@ -23,6 +25,12 @@ impl fmt::Display for BuildError {
             ),
             Self::SyscallNrOutOfRange { nr } => {
                 write!(f, "номер сискола {nr} не влезает в u32")
+            }
+            Self::BpfCodeOutOfRange { code } => {
+                write!(f, "BPF-опкод {code:#x} не влезает в u16")
+            }
+            Self::InvalidConstant { name, value } => {
+                write!(f, "недопустимое значение константы {name}: {value}")
             }
         }
     }
@@ -37,25 +45,22 @@ fn offset_to_u8(offset: usize) -> Result<u8, BuildError> {
 }
 
 #[inline]
-#[allow(clippy::cast_possible_truncation)]
-const fn stmt(code: u32, k: u32) -> sock_filter {
-    sock_filter {
-        code: code as u16,
-        jt: 0,
-        jf: 0,
-        k,
-    }
+fn stmt(code: u32, k: u32) -> Result<sock_filter, BuildError> {
+    u16::try_from(code).map_or(Err(BuildError::BpfCodeOutOfRange { code }), |c| {
+        Ok(sock_filter {
+            code: c,
+            jt: 0,
+            jf: 0,
+            k,
+        })
+    })
 }
 
 #[inline]
-#[allow(clippy::cast_possible_truncation)]
-const fn jump(code: u32, k: u32, jt: u8, jf: u8) -> sock_filter {
-    sock_filter {
-        code: code as u16,
-        jt,
-        jf,
-        k,
-    }
+fn jump(code: u32, k: u32, jt: u8, jf: u8) -> Result<sock_filter, BuildError> {
+    u16::try_from(code).map_or(Err(BuildError::BpfCodeOutOfRange { code }), |c| {
+        Ok(sock_filter { code: c, jt, jf, k })
+    })
 }
 
 pub struct Rule {
@@ -66,23 +71,24 @@ pub struct Rule {
 pub fn build_program(rules: &[Rule], default_action: u32) -> Result<Vec<sock_filter>, BuildError> {
     let mut prog = Vec::with_capacity(4 + rules.len() * 2 + 2);
 
-    prog.push(stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_ARCH_OFFSET));
-    prog.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 0, 0));
-    prog.push(stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_NR_OFFSET));
-    prog.push(jump(BPF_JMP | BPF_JGE | BPF_K, X32_SYSCALL_BIT, 0, 0));
+    // Теперь все вызовы используют оператор ? для проброса ошибки
+    prog.push(stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_ARCH_OFFSET)?);
+    prog.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 0, 0)?);
+    prog.push(stmt(BPF_LD | BPF_W | BPF_ABS, SECCOMP_DATA_NR_OFFSET)?);
+    prog.push(jump(BPF_JMP | BPF_JGE | BPF_K, X32_SYSCALL_BIT, 0, 0)?);
 
     let rules_start = prog.len();
     for r in rules {
         let nr = u32::try_from(r.nr).map_err(|_| BuildError::SyscallNrOutOfRange { nr: r.nr })?;
-        prog.push(jump(BPF_JMP | BPF_JEQ | BPF_K, nr, 0, 0));
-        prog.push(stmt(BPF_RET | BPF_K, r.action));
+        prog.push(jump(BPF_JMP | BPF_JEQ | BPF_K, nr, 0, 0)?);
+        prog.push(stmt(BPF_RET | BPF_K, r.action)?);
     }
 
     let default_ret_idx = prog.len();
-    prog.push(stmt(BPF_RET | BPF_K, default_action));
+    prog.push(stmt(BPF_RET | BPF_K, default_action)?);
 
     let kill_idx = prog.len();
-    prog.push(stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS));
+    prog.push(stmt(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS)?);
 
     prog[1].jf = offset_to_u8(kill_idx - (1 + 1))?;
     prog[3].jt = offset_to_u8(kill_idx - (3 + 1))?;
