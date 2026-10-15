@@ -17,7 +17,6 @@ fn main() -> Result<(), bpf::BuildError> {
         },
     ];
 
-    // Строгое преобразование без as и без паники
     let enosys = u32::try_from(libc::ENOSYS).map_err(|_| bpf::BuildError::InvalidConstant {
         name: "libc::ENOSYS",
         value: i64::from(libc::ENOSYS),
