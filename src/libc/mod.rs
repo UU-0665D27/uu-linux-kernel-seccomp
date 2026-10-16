@@ -173,6 +173,7 @@ use libc::{
 ///
 /// ```rust
 /// use libc::c_long;
+/// use uu_linux_kernel_seccomp::libc::resolve_name;
 ///
 /// assert_eq!(resolve_name("read"),   libc::SYS_read   as c_long);
 /// assert_eq!(resolve_name("write"),  libc::SYS_write  as c_long);
