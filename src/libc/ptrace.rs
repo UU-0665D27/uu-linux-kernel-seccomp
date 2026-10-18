@@ -19,15 +19,17 @@
 //! работает attach к прямому потомку — так и тестам, и примеру `dump -p`
 //! проще показать результат.
 
-use libc::{
-    PTRACE_ATTACH, PTRACE_DETACH, SIGKILL, WUNTRACED, c_int, c_long, c_uint, pid_t, sock_filter,
-};
+use libc::{PTRACE_ATTACH, PTRACE_DETACH, SIGKILL, WUNTRACED, c_int, c_long, pid_t, sock_filter};
 use std::io::{self, Error};
 
 // ── Константы ядра, которых нет в libc ───────────────────────────────
 
 /// `PTRACE_SECCOMP_GET_FILTER` (Linux ≥ 4.4).
-pub const PTRACE_SECCOMP_GET_FILTER: c_uint = 0x4204;
+///
+/// Число — `u32`, а не `c_uint`/`c_int`: glibc объявляет `ptrace(request: c_uint)`,
+/// а musl — `ptrace(request: c_int)`; конвертация делает `.try_into()` на месте
+/// вызова, так что крейс собирается на обеих libc.
+pub const PTRACE_SECCOMP_GET_FILTER: u32 = 0x4204;
 
 // ── Основной буфер обработки чужого фильтра ──────────────────────────
 
@@ -88,8 +90,13 @@ fn read_filters(pid: pid_t) -> io::Result<Vec<Vec<sock_filter>>> {
 /// Возвращает только длину, `None` уже не различаем.
 fn filter_len(pid: pid_t, idx: c_long) -> io::Result<c_long> {
     unsafe {
+        // #[allow]: на glibc request — c_uint (u32), на musl — c_int;
+        // try_into() тождественен только под glibc.
+        #[allow(clippy::useless_conversion)]
         let ret = libc::ptrace(
-            PTRACE_SECCOMP_GET_FILTER,
+            PTRACE_SECCOMP_GET_FILTER
+                .try_into()
+                .expect("0x4204 влезает в c_*"),
             c_long::from(pid),
             idx,
             std::ptr::null_mut::<c_int>(),
@@ -106,8 +113,13 @@ fn filter_len(pid: pid_t, idx: c_long) -> io::Result<c_long> {
 fn filter_body(pid: pid_t, idx: c_long, len: usize) -> io::Result<Vec<sock_filter>> {
     let mut out: Vec<sock_filter> = Vec::with_capacity(len);
     unsafe {
+        // #[allow]: на glibc request — c_uint (u32), на musl — c_int;
+        // try_into() тождественен только под glibc.
+        #[allow(clippy::useless_conversion)]
         let ret = libc::ptrace(
-            PTRACE_SECCOMP_GET_FILTER,
+            PTRACE_SECCOMP_GET_FILTER
+                .try_into()
+                .expect("0x4204 влезает в c_*"),
             c_long::from(pid),
             idx,
             out.as_mut_ptr().cast::<c_int>(),
