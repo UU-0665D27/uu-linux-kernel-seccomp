@@ -1,5 +1,7 @@
 pub mod bpf;
 pub mod consts;
+pub mod dump;
+pub mod ptrace;
 
 use libc::{
     SYS__sysctl, SYS_accept, SYS_accept4, SYS_access, SYS_acct, SYS_add_key, SYS_adjtimex,
@@ -208,9 +210,63 @@ use libc::{
 /// собирается в идеальный jump-табличный код и не требует ничего, кроме
 /// самого `libc`.
 #[must_use]
-#[allow(clippy::too_many_lines)]
 pub fn resolve_name(name: &str) -> c_long {
-    match name {
+    nr_by_name(name)
+}
+
+/// Обратный резолвинг: номер системного вызова → каноническое имя.
+///
+/// Тот же список, что и у [`resolve_name`], только в другую сторону. Нужен,
+/// когда таблица известна лишь номером — например, при дизассемблировании
+/// уже скомпилированной BPF-программы (см. [`dump`](crate::libc::dump::dump)).
+///
+/// Возвращает `None`, если номер не из таблицы x86_64. В частности, имени
+/// нет у служебных значений вроде `0x4000_0000` или `0xffff_ffff`.
+///
+/// # Пример
+///
+/// ```rust
+/// use uu_linux_kernel_seccomp::libc::name_of;
+///
+/// assert_eq!(name_of(libc::SYS_read), Some("read"));
+/// assert_eq!(name_of(libc::SYS_openat), Some("openat"));
+/// assert_eq!(name_of(0x4000_0000), None);
+/// ```
+#[must_use]
+pub fn name_of(nr: c_long) -> Option<&'static str> {
+    name_by_nr(nr)
+}
+
+/// Единый источник правды: из одного списка `"имя" => SYS_константа`
+/// генерируются прямой (`nr_by_name`) и обратный (`name_by_nr`) резолверы.
+///
+/// Оба остаются обычными `match`, поэтому rustc строит для них jump-таблицы
+/// так же, как раньше для одной `resolve_name`.
+#[allow(non_upper_case_globals)]
+macro_rules! define_syscall_table {
+    ($($name:literal => $sys:path,)*) => {
+        #[allow(clippy::too_many_lines)]
+        #[allow(non_upper_case_globals)]
+        fn nr_by_name(name: &str) -> c_long {
+            match name {
+                $($name => $sys,)*
+                _ => -1,
+            }
+        }
+
+        #[allow(clippy::too_many_lines)]
+        #[allow(clippy::missing_const_for_fn)]
+        #[allow(non_upper_case_globals)]
+        fn name_by_nr(nr: c_long) -> Option<&'static str> {
+            match nr {
+                $($sys => Some($name),)*
+                _ => None,
+            }
+        }
+    };
+}
+
+define_syscall_table! {
         // 0..173
         "read" => SYS_read,
         "write" => SYS_write,
@@ -586,7 +642,4 @@ pub fn resolve_name(name: &str) -> c_long {
         // 453..461: не определены в этой таблице
         // 462:
         "mseal" => SYS_mseal,
-
-        _ => -1, // __NR_SCMP_ERROR
-    }
 }

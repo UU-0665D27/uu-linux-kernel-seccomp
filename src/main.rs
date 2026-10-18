@@ -1,28 +1,16 @@
 use libc::sock_filter;
-use uu_linux_kernel_seccomp::libc::bpf;
+use uu_linux_kernel_seccomp::libc::{bpf, dump};
 
 fn main() -> Result<(), bpf::BuildError> {
     let rules = vec![
-        bpf::Rule {
-            nr: libc::SYS_read,
-            action: libc::SECCOMP_RET_ALLOW,
-        },
-        bpf::Rule {
-            nr: libc::SYS_write,
-            action: libc::SECCOMP_RET_ALLOW,
-        },
-        bpf::Rule {
-            nr: libc::SYS_execve,
-            action: libc::SECCOMP_RET_ALLOW,
-        },
-        bpf::Rule {
-            nr: libc::SYS_exit,
-            action: libc::SECCOMP_RET_ALLOW,
-        },
-        bpf::Rule {
-            nr: libc::SYS_exit_group,
-            action: libc::SECCOMP_RET_ALLOW,
-        },
+        bpf::Rule::new(libc::SYS_read, libc::SECCOMP_RET_ALLOW),
+        bpf::Rule::new(libc::SYS_write, libc::SECCOMP_RET_ALLOW),
+        bpf::Rule::new(libc::SYS_execve, libc::SECCOMP_RET_ALLOW),
+        bpf::Rule::new(libc::SYS_exit, libc::SECCOMP_RET_ALLOW),
+        bpf::Rule::new(libc::SYS_exit_group, libc::SECCOMP_RET_ALLOW),
+        // Демонстрация проверки аргумента: open(...) только с пустыми
+        // флагами (O_RDONLY == 0) — аргумент 1, младшая и старшая половины.
+        bpf::Rule::new(libc::SYS_open, libc::SECCOMP_RET_ALLOW).check(1, bpf::Cmp::Eq(0)),
     ];
 
     let enosys = u32::try_from(libc::ENOSYS).map_err(|_| bpf::BuildError::InvalidConstant {
@@ -33,13 +21,23 @@ fn main() -> Result<(), bpf::BuildError> {
     let default_action = libc::SECCOMP_RET_ERRNO | enosys;
     let mut prog = bpf::build_program(&rules, default_action)?;
 
-    println!("Сгенерировано {} инструкций BPF:", prog.len());
-    for (i, f) in prog.iter().enumerate() {
-        println!(
-            "  {i:3}: code={:#06x} jt={} jf={} k={:#x}",
-            f.code, f.jt, f.jf, f.k
-        );
-    }
+    let colored = unsafe { libc::isatty(libc::STDOUT_FILENO) } == 1;
+    let listing = if colored {
+        dump::dump_colored(&prog)
+    } else {
+        dump::dump(&prog)
+    };
+    println!(
+        "Сгенерировано {} инструкций BPF: {}",
+        prog.len(),
+        if colored {
+            "(цвет)"
+        } else {
+            "(без цвета)"
+        }
+    );
+    print!("{listing}");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
     println!("---");
 
     let pid = unsafe { libc::fork() };
@@ -98,16 +96,14 @@ fn run_child_process(prog: &mut [sock_filter]) -> ! {
         unsafe { libc::exit(1) };
     }
 
-    // 4. Тестируем запрещенный системный вызов
-    // Используем прямой syscall, чтобы избежать кэширования PID
-    // и особенностей обработки errno в glibc/musl.
+    // 4. Тестируем запрещенный системный вызов.
+    // Обёртка `libc::syscall` транслирует сырое `-errno` от ядра в `-1`
+    // и выставляет `errno`, поэтому ошибку читаем из `errno`, а не из знака.
     let test_pid = unsafe { libc::syscall(libc::SYS_getpid) };
 
-    // В Linux syscall при ошибке возвращает -errno (в данном случае -38)
-    if test_pid < 0 {
-        let err_code = -test_pid;
-        // Инфалибльное преобразование i32 (ENOSYS) в c_long через .into()
-        if err_code == libc::ENOSYS.into() {
+    if test_pid == -1 {
+        let errno = std::io::Error::last_os_error().raw_os_error();
+        if errno == Some(libc::ENOSYS) {
             let msg = "[УСПЕХ] Seccomp заблокировал getpid и вернул ENOSYS (38)\n".as_bytes();
             unsafe { libc::write(2, msg.as_ptr().cast::<libc::c_void>(), msg.len()) };
             unsafe { libc::exit(0) };
