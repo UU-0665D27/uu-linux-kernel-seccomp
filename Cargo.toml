@@ -1,11 +1,12 @@
 [package]
 name = "uu-linux-kernel-seccomp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Pure-Rust seccomp-BPF filter builder for x86_64: low-level libc layer, idiomatic Policy layer, dump disassembler"
 authors = ["UU <uu230196@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/UU-0665D27/uu-linux-kernel-seccomp"
+readme = "README.md"
 categories = ["os", "os::linux-apis", "api-bindings"]
 keywords = ["seccomp", "bpf", "linux", "syscall", "sandbox"]
 
