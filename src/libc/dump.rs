@@ -23,10 +23,10 @@
 use core::fmt::Write as _;
 
 use libc::{
-    BPF_ABS, BPF_JA, BPF_JEQ, BPF_JGE, BPF_JGT, BPF_JMP, BPF_JSET, BPF_K, BPF_LD, BPF_RET, BPF_W,
-    SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS, SECCOMP_RET_KILL_THREAD,
-    SECCOMP_RET_LOG, SECCOMP_RET_TRACE, SECCOMP_RET_TRAP, SECCOMP_RET_USER_NOTIF, c_long,
-    sock_filter,
+    BPF_ABS, BPF_ALU, BPF_AND, BPF_JA, BPF_JEQ, BPF_JGE, BPF_JGT, BPF_JMP, BPF_JSET, BPF_K, BPF_LD,
+    BPF_RET, BPF_W, SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO, SECCOMP_RET_KILL_PROCESS,
+    SECCOMP_RET_KILL_THREAD, SECCOMP_RET_LOG, SECCOMP_RET_TRACE, SECCOMP_RET_TRAP,
+    SECCOMP_RET_USER_NOTIF, c_long, sock_filter,
 };
 
 use crate::libc::consts::{AUDIT_ARCH_X86_64, SECCOMP_DATA_ARCH_OFFSET, SECCOMP_DATA_NR_OFFSET};
@@ -40,6 +40,7 @@ const CODE_JEQ: u32 = BPF_JMP | BPF_JEQ | BPF_K;
 const CODE_JGT: u32 = BPF_JMP | BPF_JGT | BPF_K;
 const CODE_JGE: u32 = BPF_JMP | BPF_JGE | BPF_K;
 const CODE_JSET: u32 = BPF_JMP | BPF_JSET | BPF_K;
+const CODE_ALU_AND_K: u32 = BPF_ALU | BPF_AND | BPF_K;
 
 const HEADER: &str = "#Label  CODE  JT   JF      K\n";
 const SEPARATOR: &str = "#---------------------------------\n";
@@ -118,6 +119,12 @@ fn disasm(prog: &[sock_filter], pc: usize, color: bool) -> Option<String> {
     if code == CODE_RET_K {
         let (color_code, text) = action_text(ins.k);
         return Some(format!("return {}", paint(color, color_code, &text)));
+    }
+
+    if code == CODE_ALU_AND_K {
+        // `A &= k` — так компилируется маскированное равенство.
+        let constant = paint(color, YELLOW, &format!("0x{:08x}", ins.k));
+        return Some(format!("$A = $A & {constant}"));
     }
 
     if code == CODE_JA {

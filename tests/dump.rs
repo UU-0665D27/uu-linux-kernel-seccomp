@@ -79,6 +79,23 @@ fn arg_compare_constants_rendered_as_hex_not_names() {
     assert!(!text.contains("if ($A != read)"));
 }
 
+#[test]
+fn masked_eq_renders_alu_and_instruction() {
+    // Маскированное равенство компилируется в пары LD + ALU|AND|K +
+    // JEQ: AND должен печататься как `$A = $A & k`, а не `???`.
+    let prog = bpf::build_program(
+        &[Rule::new(libc::SYS_open, libc::SECCOMP_RET_ALLOW)
+            .check(1, bpf::Cmp::MaskedEq { mask: 3, val: 0 })],
+        errno_ret(libc::ENOSYS),
+    )
+    .unwrap();
+    let text = dump(&prog);
+
+    assert!(text.contains("$A = $A & 0x00000003"));
+    assert!(text.contains("$A = $A & 0x00000000"));
+    assert!(!text.contains("???"));
+}
+
 // ── Цвета ────────────────────────────────────────────────────────────
 
 #[test]
